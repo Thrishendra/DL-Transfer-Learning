@@ -1,179 +1,257 @@
-# DL- Developing a Recurrent Neural Network Model for Stock Prediction
+# DL- Developing a Neural Network Classification Model using Transfer Learning
 
 ## AIM
-To develop a Recurrent Neural Network (RNN) model for predicting stock prices using historical closing price data.
+To develop an image classification model using transfer learning with VGG19 architecture for the given dataset.
 
-## THEORY
-A Recurrent Neural Network (RNN) is a type of deep learning model designed to handle sequential data, such as time series like stock prices. It processes previous inputs through loops, allowing it to capture temporal dependencies and patterns over time. When used for stock price prediction, the RNN analyzes historical price data to learn trends and make future price estimates. Its ability to remember information across sequences makes it suitable for modeling the dynamic and seasonal nature of stock markets. Overall, RNNs help improve forecast accuracy by leveraging past data to inform future predictions.
+## Problem Statement and Dataset
+The problem statement for this experiment is to develop an image classification model that can accurately distinguish between 'defect' and 'notdefect' semiconductor chip images. This is a binary classification task, where the goal is to leverage transfer learning using a pre-trained VGG19 model to effectively classify new, unseen chip images.
+
+
+## Neural Network Model
+<img width="1043" height="802" alt="560724958-e89b0214-396e-402c-9891-22c433677482" src="https://github.com/user-attachments/assets/7b5f29d8-b9b9-4593-b792-035f782fba4c" />
+
 
 ## DESIGN STEPS
-### STEP 1: 
-Load and normalize data, create sequences.
+STEP 1:
+Import required libraries and define image transforms.
 
-### STEP 2: 
-Convert data to tensors and set up DataLoader.
+STEP 2:
+Load training and testing datasets using ImageFolder.
 
-### STEP 3: 
-Define the RNN model architecture.
+STEP 3:
+Visualize sample images from the dataset.
 
-### STEP 4: 
-Summarize, compile with loss and optimizer.
+STEP 4:
+Load pre-trained VGG19, modify the final layer for binary classification, and freeze feature extractor layers.
 
-### STEP 5: 
-Train the model with loss tracking.
+STEP 5:
+Define loss function (BCEWithLogitsLoss) and optimizer (Adam). Train the model and plot the loss curve.
 
-### STEP 6: 
-Predict on test data, plot actual vs. predicted prices.
+STEP 6:
+Evaluate the model with test accuracy, confusion matrix, classification report, and visualize predictions.
+
 
 ## PROGRAM
 
-### Name: Tella Thrishendra
+### Name:Tella Thrishendra
 
-### Register Number: 212223230227
+### Register Number:212223230227
 
 ```python
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import MinMaxScaler
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+import torch.optim as optim
+import torchvision
+import torchvision.transforms as transforms
+from torch.utils.data import DataLoader
+from torchvision import models, datasets
+from torchvision.models import VGG19_Weights
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.metrics import confusion_matrix, classification_report
+import seaborn as sns
 
 ## Step 1: Load and Preprocess Data
-# Load training and test datasets
-df_train = pd.read_csv('trainset.csv')
-df_test = pd.read_csv('testset.csv')
+# Define transformations for images
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),  # Resize images for pre-trained model input
+    transforms.ToTensor(),
+    #transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])  # Standard normalization for pre-trained models
+])
 
-# Use closing prices
-train_prices = df_train['Close'].values.reshape(-1, 1)
-test_prices = df_test['Close'].values.reshape(-1, 1)
+!unzip -qq ./chip_data.zip -d data
 
-# Normalize the data based on training set only
-scaler = MinMaxScaler()
-scaled_train = scaler.fit_transform(train_prices)
-scaled_test = scaler.transform(test_prices)
+# Load dataset from a folder (structured as: dataset/class_name/images)
+dataset_path = "./data/dataset/"
+train_dataset = datasets.ImageFolder(root=f"{dataset_path}/train", transform=transform)
+test_dataset = datasets.ImageFolder(root=f"{dataset_path}/test", transform=transform)
 
-# Create sequences
-def create_sequences(data, seq_length):
-    x = []
-    y = []
-    for i in range(len(data) - seq_length):
-        x.append(data[i:i+seq_length])
-        y.append(data[i+seq_length])
-    return np.array(x), np.array(y)
+# Display some input images
+def show_sample_images(dataset, num_images=5):
+    fig, axes = plt.subplots(1, num_images, figsize=(5, 5))
+    for i in range(num_images):
+        image, label = dataset[i]
+        image = image.permute(1, 2, 0)  # Convert tensor format (C, H, W) to (H, W, C)
+        axes[i].imshow(image)
+        axes[i].set_title(dataset.classes[label])
+        axes[i].axis("off")
+    plt.show()
 
-seq_length = 60
-x_train, y_train = create_sequences(scaled_train, seq_length)
-x_test, y_test = create_sequences(scaled_test, seq_length)
-x_train.shape, y_train.shape, x_test.shape, y_test.shape
+# Show sample images from the training dataset
+show_sample_images(train_dataset)
 
-# Convert to PyTorch tensors
-x_train_tensor = torch.tensor(x_train, dtype=torch.float32)
-y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
-x_test_tensor = torch.tensor(x_test, dtype=torch.float32)
-y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
+# Get the total number of samples in the training dataset
+print(f"Total number of training samples: {len(train_dataset)}")
 
-# Create dataset and dataloader
-train_dataset = TensorDataset(x_train_tensor, y_train_tensor)
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+# Get the shape of the first image in the dataset
+first_image, label = train_dataset[0]
+print(f"Shape of the first image: {first_image.shape}")
+# Get the total number of samples in the testing dataset
+print(f"Total number of training samples: {len(test_dataset)}")
 
-## Step 2: Define RNN Model
-class RNNModel(nn.Module):
-    def __init__(self, input_size=1,hidden_size=64,num_layers=2,output_size=1):
-        super(RNNModel, self).__init__()
-        self.rnn = nn.RNN(input_size, hidden_size, num_layers, batch_first=True)
-        self.fc  = nn.Linear(hidden_size,output_size)
-    def forward(self, x):
-        out,_=self.rnn(x)
-        out=self.fc(out[:,-1,:])
-        return out
+# Get the shape of the first image in the dataset
+first_image, label = test_dataset[0]
+print(f"Shape of the first image: {first_image.shape}")
 
-model = RNNModel()
+# Create DataLoader for batch processing
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+
+model=models.vgg19(weights=VGG19_Weights.DEFAULT)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = model.to(device)
+from torchsummary import summary
+# Print model summary
+summary(model, input_size=(3, 224, 224))
+model.classifier[-1]=nn.Linear(model.classifier[-1].in_features,1)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = model.to(device)
 
-!pip install torchinfo
-
-from torchinfo import summary
-
-# input_size = (batch_size, seq_len, input_size)
-summary(model, input_size=(64, 60, 1))
-
-criterion = nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+summary(model, input_size=(3, 224, 224))
+for param in model.features.parameters():
+    param.requires_grad = False
+criterion =nn.BCEWithLogitsLoss()
+optimizer =optim.Adam(model.parameters(),lr=0.001)
 
 ## Step 3: Train the Model
-
-
-def train_model(model, train_loader, criterion, optimizer, epochs=20):
-    train_losses = []
+def train_model(model, train_loader,test_loader,num_epochs=10):
+    train_losses=[]
+    val_losses=[]
     model.train()
-    for epoch in range(epochs):
-        total_loss = 0
-        for x_batch, y_batch in train_loader:
-            x_batch, y_batch =x_batch.to(device),y_batch.to(device)
-            optimizer.zero_grad()
-            outputs = model(x_batch)
-            loss = criterion(outputs, y_batch)
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-        train_losses.append(total_loss / len(train_loader))
-        print(f"Epoch [{epoch+1}/{epochs}], Loss: {total_loss / len(train_loader):.4f}")
-# Plot training loss
-    print('Name: Tella Thrishendra')
-    print('Register Number: 212223230227')
-    plt.plot(train_losses, label='Training Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('MSE Loss')
-    plt.title('Training Loss Over Epochs')
+    for epoch in range(num_epochs):
+      running_loss=0.0
+      for images,labels in train_loader:
+        images,labels=images.to(device),labels.to(device)
+        optimizer.zero_grad()
+        outputs=model(images)
+        loss=criterion(outputs,labels.unsqueeze(1).float())
+        loss.backward()
+        optimizer.step()
+        running_loss+=loss.item()
+      train_losses.append(running_loss/len(train_loader))
+      model.eval()
+      val_loss=0.0
+      with torch.no_grad():
+        for images,labels in test_loader:
+          images,labels=images.to(device),labels.to(device)
+          outputs=model(images)
+          loss=criterion(outputs,labels.unsqueeze(1).float())
+          val_loss=loss.item()
+      val_losses.append(val_loss/len(test_loader))
+      model.train()
+        # Compute validation loss
+        # Write your code here
+
+      print(f'Epoch [{epoch+1}/{num_epochs}], Train Loss: {train_losses[-1]:.4f}, Validation Loss: {val_losses[-1]:.4f}')
+
+    # Plot training and validation loss
+    print("Name: Tella Thrishendra")
+    print("Register Number:212223230227")
+    plt.figure(figsize=(8, 6))
+    plt.plot(range(1, num_epochs + 1), train_losses, label='Train Loss', marker='o')
+    plt.plot(range(1, num_epochs + 1), val_losses, label='Validation Loss', marker='s')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.title('Training and Validation Loss')
     plt.legend()
     plt.show()
-train_model(model,train_loader,criterion,optimizer)
+# Move model to GPU if available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = model.to(device)
+# Train the model
+# Write your code here
+train_model(model,train_loader,test_loader)
+## Step 4: Test the Model and Compute Confusion Matrix & Classification Report
+def test_model(model, test_loader):
+    model.eval()
+    correct = 0
+    total = 0
+    all_preds = []
+    all_labels = []
 
-## Step 4: Make Predictions on Test Set
-model.eval()
-with torch.no_grad():
-    predicted = model(x_test_tensor.to(device)).cpu().numpy()
-    actual = y_test_tensor.cpu().numpy()
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            _, predicted = torch.max(outputs, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+            all_preds.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
 
-# Inverse transform the predictions and actual values
-predicted_prices = scaler.inverse_transform(predicted)
-actual_prices = scaler.inverse_transform(actual)
+    accuracy = correct / total
+    print(f'Test Accuracy: {accuracy:.4f}')
 
-# Plot the predictions vs actual prices
-print('Name: Tella Thrishendra')
-print('Register Number: 212223230227')
-plt.figure(figsize=(10, 6))
-plt.plot(actual_prices, label='Actual Price')
-plt.plot(predicted_prices, label='Predicted Price')
-plt.xlabel('Time')
-plt.ylabel('Price')
-plt.title('Stock Price Prediction using RNN')
-plt.legend()
-plt.show()
-print(f'Predicted Price: {predicted_prices[-1]}')
-print(f'Actual Price: {actual_prices[-1]}')
+    # Compute confusion matrix
+    cm = confusion_matrix(all_labels, all_preds)
+    print("Name: Tella Thrishendra")
+    print("Register Number: 212223230227")
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=train_dataset.classes, yticklabels=train_dataset.classes)
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.title('Confusion Matrix')
+    plt.show()
+
+    # Print classification report
+    print("Name:Tella Thrishendra")
+    print("Register Number:212223230227")
+    print("Classification Report:")
+    print(classification_report(all_labels, all_preds, target_names=train_dataset.classes))
+# Evaluate the model
+# write your code here
+
+test_model(model,test_loader)
+## Step 5: Predict on a Single Image and Display It
+def predict_image(model, image_index, dataset):
+    model.eval()
+    image, label = dataset[image_index]
+    with torch.no_grad():
+        image_tensor = image.unsqueeze(0).to(device)
+        output = model(image_tensor)
+
+        # Apply sigmoid to get probability, threshold at 0.5
+        prob = torch.sigmoid(output)
+        predicted = (prob > 0.5).int().item()
+
+
+    class_names = class_names = dataset.classes
+    # Display the image
+    image_to_display = transforms.ToPILImage()(image)
+    plt.figure(figsize=(4, 4))
+    plt.imshow(image_to_display)
+    plt.title(f'Actual: {class_names[label]}\nPredicted: {class_names[predicted]}')
+    plt.axis("off")
+    plt.show()
+
+    print(f'Actual: {class_names[label]}, Predicted: {class_names[predicted]}')
+# Example Prediction
+predict_image(model, image_index=55, dataset=test_dataset)
+#Example Prediction
+predict_image(model, image_index=25, dataset=test_dataset)
+
 ```
 
 ### OUTPUT
 
-## Training Loss Over Epochs Plot
-<img width="665" height="547" alt="image" src="https://github.com/user-attachments/assets/baf73a6d-50a9-461d-9438-5e7d1b8e9206" />
+
+<img width="486" height="818" alt="560721952-26799a4f-cc48-427d-ae93-85dd63d0c2ae" src="https://github.com/user-attachments/assets/fe056825-7fb7-4d31-adb7-3287863f4be8" />
+
+## Training Loss, Validation Loss Vs Iteration Plot
+<img width="861" height="690" alt="Screenshot 2026-05-22 083737" src="https://github.com/user-attachments/assets/d7f49991-c8f3-4694-adf9-364eb65feadb" />
 
 
-## True Stock Price, Predicted Stock Price vs time
+## Confusion Matrix
 
-<img width="974" height="651" alt="image" src="https://github.com/user-attachments/assets/53d01cc6-08a3-4979-bf3e-2f4b62f38f7e" />
-
-
-
-### Predictions
-
-<img width="361" height="42" alt="image" src="https://github.com/user-attachments/assets/ad719993-4f08-463b-a3b6-b38791adb923" />
+<img width="797" height="683" alt="Screenshot 2026-05-22 083803" src="https://github.com/user-attachments/assets/d8f78803-1639-4224-8933-685c92305498" />
 
 
+## Classification Report
+<img width="563" height="211" alt="Screenshot 2026-05-22 083831" src="https://github.com/user-attachments/assets/ce5530aa-f213-4f39-ba32-2cffaac870e4" />
+
+
+### New Sample Data Prediction
+<img width="522" height="799" alt="560721860-831d451c-fdc7-41ca-bf1f-0c3b36b99fbc" src="https://github.com/user-attachments/assets/c958953f-be91-404b-bc8c-c5cb2ab8d6eb" />
 
 ## RESULT
-Thus, a Recurrent Neural Network (RNN) model for predicting stock prices using historical closing price data has been developed successfully
+Thus the python program to develop an image classification model using transfer learning with VGG19 architecture is executed successfully.
